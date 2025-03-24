@@ -1,29 +1,36 @@
 import streamlit as st
 import json
+from datetime import datetime
 
-# Load the labeled news
+# Load labeled news data
 with open("news_labeled.json", "r", encoding="utf-8") as f:
     data = json.load(f)
 
 st.set_page_config(page_title="Stock Sentiment Dashboard", layout="wide")
-
 st.title("📈 Stock Sentiment Dashboard")
-st.markdown("View sentiment-labeled news stories for your favorite stocks.")
+st.markdown("View sentiment-labeled news stories by company.")
 
-# Sidebar filters
+# Sidebar: stock selection + sentiment filter
 tickers = list(data.keys())
-selected_ticker = st.sidebar.selectbox("📊 Select a Stock", tickers)
+selected_ticker = st.sidebar.selectbox("📊 Select Stock", tickers)
 sentiment_filter = st.sidebar.multiselect("🧠 Filter by Sentiment", ["positive", "neutral", "negative"], default=["positive", "neutral", "negative"])
 
 st.markdown(f"### 📰 News for `{selected_ticker}`")
 
-# Display articles
+# Show results
 for url, article in data[selected_ticker].items():
-    if article["sentiment"] not in sentiment_filter:
+    sentiment = article.get("sentiment", "unknown")
+    if sentiment not in sentiment_filter:
         continue
 
-    with st.expander(f"🔗 [{article['sentiment'].capitalize()} | {round(article['score']*100)}%] {url}"):
-        st.markdown(f"**URL:** [{url}]({url})")
-        st.markdown(f"**Sentiment:** `{article['sentiment']}`  \n**Score:** `{article['score']}`")
+    title = article.get("title", url)
+    score = article.get("score", 0)
+    timestamp = article.get("timestamp", "Unknown Date")
+    preview = article["text"][:500] + "..." if len(article["text"]) > 500 else article["text"]
+
+    with st.expander(f"🕒 {timestamp} | 🧠 {sentiment.capitalize()} ({int(score*100)}%) | 🔗 {title}"):
+        st.markdown(f"[**Open Article**]({url})", unsafe_allow_html=True)
+        st.markdown(f"**Sentiment:** `{sentiment}`  \n**Score:** `{score}`")
+        st.markdown(f"**Published:** `{timestamp}`")
         st.markdown("**Preview:**")
-        st.write(article["text"][:1000] + "..." if len(article["text"]) > 1000 else article["text"])
+        st.write(preview)

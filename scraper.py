@@ -7,9 +7,10 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from bs4 import BeautifulSoup
+from datetime import datetime
 
 # List of stock tickers
-stock_symbols = ["TSLA", "NVDA"]
+stock_symbols = ["NVDA"]
 
 # Dictionary to store results
 all_news = {}
@@ -28,24 +29,45 @@ def accept_cookies_once():
     except:
         print("⚠️ Cookie already accepted or not shown")
 
-def get_main_text_from_url(url):
+def get_article_details(url):
+    """Open a Yahoo Finance article and extract title, timestamp, and full text."""
     try:
         driver.get(url)
         time.sleep(2)
-
         soup = BeautifulSoup(driver.page_source, "html.parser")
 
-        # Try to find the main article content
+        # Title
+        title = soup.find("cover-title")
+        if not title:
+            title = soup.find("title")
+        title_text = title.get_text(strip=True) if title else "No Title"
+
+        # Timestamp
+        time_tag = soup.find("time")
+        if time_tag and time_tag.has_attr("datetime"):
+            timestamp = time_tag["datetime"]
+        elif time_tag:
+            timestamp = time_tag.get_text(strip=True)
+        else:
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+        # Main article body
         article = soup.find("article") or soup.find("div", {"class": re.compile(r"(caas-body|article|content)")})
         if not article:
             return None
 
         paragraphs = article.find_all(["p", "h2"])
         full_text = "\n".join(p.get_text(strip=True) for p in paragraphs)
-        return full_text if full_text else None
+        return {
+            "title": title_text,
+            "timestamp": timestamp,
+            "text": full_text if full_text else "No content"
+        }
+
     except Exception as e:
-        print(f"❌ Failed to extract article: {e}")
+        print(f"❌ Error scraping article: {url} → {e}")
         return None
+
 
 def scrape_news_for_symbol(symbol):
     url = f"https://finance.yahoo.com/quote/{symbol}/"
@@ -80,7 +102,7 @@ def scrape_news_for_symbol(symbol):
 
         if not title:
             continue
-        if "ads" in href or "partner" in href or "doubleclick" in href or "taboola" in href:
+        if "ads" in href or "partner" in href or "doubleclick" in href or "taboola" in href or "premiumNews" in href:
             continue
         if not href.startswith("http"):
             href = "https://finance.yahoo.com" + href
@@ -89,10 +111,13 @@ def scrape_news_for_symbol(symbol):
 
         seen.add(href)
 
-        story = get_main_text_from_url(href)
+        story = get_article_details(href)
         if story:
-            all_news[symbol][href] = story
-            print(f"✅ {symbol} → {title}")
+            all_news[symbol][href] = {
+                "title": story["title"],
+                "timestamp": story["timestamp"],
+                "text": story["text"]
+            }
         else:
             print(f"⚠️ Skipped (no content): {href}")
 
