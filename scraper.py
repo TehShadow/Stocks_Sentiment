@@ -1,48 +1,53 @@
+import os
 import json
-import re
 import time
+import re
+from datetime import datetime
+from bs4 import BeautifulSoup
+from transformers import AutoTokenizer, AutoModelForSequenceClassification, pipeline
 from selenium import webdriver
 from selenium.webdriver.firefox.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from bs4 import BeautifulSoup
-from datetime import datetime
 
-# List of stock tickers
-stock_symbols = ["NVDA"]
+# ===== USER INPUT =====
+symbol = input("Enter stock ticker (e.g. TSLA, AAPL): ").strip().upper()
 
-# Dictionary to store results
-all_news = {}
-
-# Setup headless Firefox
+# ===== SETUP =====
 options = Options()
 options.headless = True
 driver = webdriver.Firefox(options=options)
 wait = WebDriverWait(driver, 10)
 
-def accept_cookies_once():
+# ===== FINBERT SETUP =====
+model_name = "ProsusAI/finbert"
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+model = AutoModelForSequenceClassification.from_pretrained(model_name)
+sentiment_pipeline = pipeline("sentiment-analysis", model=model, tokenizer=tokenizer)
+
+news_data = {}
+news_labeled = {}
+
+# ===== ACCEPT COOKIES =====
+def accept_cookies():
     try:
         agree_button = wait.until(EC.presence_of_element_located((By.NAME, "agree")))
         driver.execute_script("arguments[0].click();", agree_button)
         print("✅ Accepted cookies")
     except:
-        print("⚠️ Cookie already accepted or not shown")
+        pass
 
+# ===== EXTRACT FULL ARTICLE =====
 def get_article_details(url):
-    """Open a Yahoo Finance article and extract title, timestamp, and full text."""
     try:
         driver.get(url)
         time.sleep(2)
         soup = BeautifulSoup(driver.page_source, "html.parser")
 
-        # Title
-        title = soup.find("cover-title")
-        if not title:
-            title = soup.find("title")
+        title = soup.find("cover-title") or soup.find("title")
         title_text = title.get_text(strip=True) if title else "No Title"
 
-        # Timestamp
         time_tag = soup.find("time")
         if time_tag and time_tag.has_attr("datetime"):
             timestamp = time_tag["datetime"]
@@ -51,13 +56,13 @@ def get_article_details(url):
         else:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
 
-        # Main article body
         article = soup.find("article") or soup.find("div", {"class": re.compile(r"(caas-body|article|content)")})
         if not article:
             return None
 
         paragraphs = article.find_all(["p", "h2"])
         full_text = "\n".join(p.get_text(strip=True) for p in paragraphs)
+
         return {
             "title": title_text,
             "timestamp": timestamp,
@@ -68,41 +73,32 @@ def get_article_details(url):
         print(f"❌ Error scraping article: {url} → {e}")
         return None
 
-
+# ===== SCRAPE NEWS HEADLINES =====
 def scrape_news_for_symbol(symbol):
     url = f"https://finance.yahoo.com/quote/{symbol}/"
     driver.get(url)
-
-    if symbol == stock_symbols[0]:
-        accept_cookies_once()
+    accept_cookies()
 
     try:
-        wait.until(EC.presence_of_element_located((
-            By.XPATH, '/html/body/div[2]/main/section/section/section/article/section[3]/div[2]'
-        )))
-    except Exception as e:
-        print(f"❌ News section not found for {symbol}: {e}")
-        return
+        wait.until(EC.presence_of_element_located((By.XPATH, '/html/body/div[2]/main/section/section/section/article/section[3]/div[2]')))
+    except:
+        print(f"❌ Could not find news section for {symbol}")
+        return {}
 
     time.sleep(2)
     soup = BeautifulSoup(driver.page_source, "html.parser")
     news_div = soup.select_one("section:nth-of-type(3) > div:nth-of-type(2)")
-
     if not news_div:
-        print(f"⚠️ Could not parse news section for {symbol}")
-        return
+        return {}
 
     seen = set()
-    articles = news_div.find_all("a")
-    all_news[symbol] = {}
+    articles = {}
 
-    for article in articles:
-        title = article.get_text(strip=True)
-        href = article.get("href", "")
+    for a in news_div.find_all("a"):
+        title = a.get_text(strip=True)
+        href = a.get("href", "")
 
-        if not title:
-            continue
-        if "ads" in href or "partner" in href or "doubleclick" in href or "taboola" in href or "premiumNews" in href:
+        if not title or "ads" in href or "partner" in href or "doubleclick" in href or "taboola" in href or "plans/select-plan" in href or "premiumNews" in href:
             continue
         if not href.startswith("http"):
             href = "https://finance.yahoo.com" + href
@@ -110,25 +106,59 @@ def scrape_news_for_symbol(symbol):
             continue
 
         seen.add(href)
-
         story = get_article_details(href)
         if story:
-            all_news[symbol][href] = {
+            articles[href] = {
                 "title": story["title"],
                 "timestamp": story["timestamp"],
                 "text": story["text"]
             }
-        else:
-            print(f"⚠️ Skipped (no content): {href}")
+            print(f"✅ Scraped: {story['title']}")
 
+    return articles
+
+# ===== ANALYZE SENTIMENT =====
+def label_sentiment(data):
+    labeled = {}
+    for url, article in data.items():
+        text = article.get("text", "").strip()
+        if not text:
+            continue
+
+        try:
+            result = sentiment_pipeline(text[:1000])[0]
+            sentiment = result["label"].lower()
+            score = round(result["score"], 3)
+        except Exception as e:
+            print(f"⚠️ Error analyzing {url}: {e}")
+            sentiment = "unknown"
+            score = 0.0
+
+        labeled[url] = {
+            "title": article["title"],
+            "timestamp": article["timestamp"],
+            "text": text,
+            "sentiment": sentiment,
+            "score": score
+        }
+        print(f"🔍 {sentiment} ({score}) → {article['title']}")
+
+    return labeled
+
+# ===== MAIN PIPELINE =====
 try:
-    for symbol in stock_symbols:
-        scrape_news_for_symbol(symbol)
+    articles = scrape_news_for_symbol(symbol)
+    news_data[symbol] = articles
+    labeled = label_sentiment(articles)
+    news_labeled[symbol] = labeled
 finally:
     driver.quit()
 
-# Save to JSON
+# Save outputs
 with open("news.json", "w", encoding="utf-8") as f:
-    json.dump(all_news, f, ensure_ascii=False, indent=2)
+    json.dump(news_data, f, ensure_ascii=False, indent=2)
 
-print("\n💾 Saved all articles to news.json")
+with open("news_labeled.json", "w", encoding="utf-8") as f:
+    json.dump(news_labeled, f, ensure_ascii=False, indent=2)
+
+print("\n✅ Done. Saved news and labeled sentiment.")
