@@ -26,15 +26,6 @@ You also need:
 
 ---
 
-## 📂 File Structure
-```
-project/
-├── stock_sentiment_dashboard.py   # Scraper + Analyzer pipeline
-├── stock_sentiment_app.py         # Streamlit Dashboard
-├── news.json                      # Raw scraped articles (auto-generated)
-├── news_labeled.json              # Labeled results (auto-generated)
-└── README.md
-```
 
 ---
 
@@ -50,17 +41,4 @@ streamlit run stock_sentiment_app.py
 - Analyzer uses `ProsusAI/finbert` from Hugging Face for local sentiment classification
 - Dashboard updates on-the-fly with scraping and analysis
 
----
-
-## 💡 Ideas for Extension
-- Date filtering or range selection
-- Graphs for sentiment over time
-- Summarize articles with a local LLM (e.g., Mistral)
-- Auto-refresh / scrape on schedule
-- Export to CSV or database
-
----
-
-## 📬 Feedback
-Open an issue or submit a feature request — let’s make this smarter together!
 
